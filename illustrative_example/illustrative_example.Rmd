@@ -1,0 +1,388 @@
+---
+title: "EBCD-direct Illustrative Example"
+author: "Annie Xie"
+date: "2026-11-23"
+output: pdf_document
+---
+
+# Packages and Functions
+
+```{r, message = FALSE, warning = FALSE}
+library(dplyr)
+library(ggplot2)
+library(pheatmap)
+# pkgload::load_all('~/Documents/GitHub/ebnm')
+library(ebnm)
+library(flashier)
+library(Matrix)
+library(lpSolve)
+library(tidyr)
+```
+
+```{r}
+library(symebcovmf)
+# pkgload::load_all('~/Documents/GitHub/packages/symebcovmf')
+```
+
+```{r}
+ebnm_generalized_binary_fix_scale <- function(x, s, mode = 'estimate', g_init = NULL, fix_g = FALSE, output = ebnm_output_default(), control = NULL){
+  ebnm_gb_output <- ebnm::ebnm_generalized_binary(x = x, s = s, mode = mode, 
+                                                  scale = 0.01, 
+                                                  g_init = g_init, fix_g = fix_g,
+                                                  output = output, control = control)
+  return(ebnm_gb_output)
+}
+```
+
+```{r}
+plot_loadings <- function(L_est, Pop, legendYN = TRUE, scales_option = "fixed"){
+  # options for scales_option are "fixed" and "free_y"
+  n <- nrow(L_est)
+  k <- ncol(L_est)
+  Idx <- rep(c(1:n), k)
+  Loading <- c(L_est)
+  Factor <- paste0('k=',c(sapply(c(1:k), function(x, n){rep(x, n)}, n = n)))
+  Factor <- factor(Factor, levels = gtools::mixedsort(unique(Factor)))
+  tib <- data.frame(Idx, Loading, Factor, Pop)
+  plt <- ggplot(tib, aes(x = Idx, y = Loading, col = Pop)) +
+    geom_point(show.legend = legendYN) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    facet_grid(cols = vars(Factor), scales = scales_option) +
+    theme(axis.title.x = element_blank(),
+          axis.title.y = element_blank(),
+          axis.ticks.x = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.text.x = element_blank(),
+          axis.text.y = element_blank(),
+          panel.spacing = unit(1, "lines"))
+  plot(plt)
+}
+
+plot_heatmap <- function(L, title = "", colors_range = c("gray96", "red"), brks = NULL){
+  ### define the color map
+  cols <- colorRampPalette(colors_range)(49)
+  if (is.null(brks) == TRUE){
+    brks <- seq(min(L), max(L), length=50)
+  }
+  
+  plt <- pheatmap(L, show_rownames = FALSE, show_colnames = FALSE, cluster_rows = FALSE, cluster_cols = FALSE, color = cols, breaks = brks, main = title)
+  return(plt)
+}
+```
+
+```{r}
+permute_L <- function(est, truth){
+  K_est <- ncol(est)
+  K_truth <- ncol(truth)
+  n <- nrow(est)
+
+  #if estimates don't have same number of columns, try padding the estimate with zeros and make cosine similarity zero
+  if (K_est < K_truth){
+    est <- cbind(est, matrix(rep(0, n*(K_truth-K_est)), nrow = n))
+  }
+
+  if (K_est > K_truth){
+    truth <- cbind(truth, matrix(rep(0, n*(K_est - K_truth)), nrow = n))
+  }
+
+  #normalize est and truth
+  norms_est <- apply(est, 2, function(x){sqrt(sum(x^2))})
+  norms_est[norms_est == 0] <- Inf
+
+  norms_truth <- apply(truth, 2, function(x){sqrt(sum(x^2))})
+  norms_truth[norms_truth == 0] <- Inf
+
+  est_normalized <- t(t(est)/norms_est)
+  truth_normalized <- t(t(truth)/norms_truth)
+
+  #compute matrix of cosine similarities
+  cosine_sim_matrix <- abs(crossprod(est_normalized, truth_normalized))
+  assignment_problem <- lp.assign(t(cosine_sim_matrix), direction = "max")
+
+  perm <- apply(assignment_problem$solution, 1, which.max)
+  return(est[,perm])
+}
+
+```
+
+```{r}
+get_permutation <- function(est, truth){
+  K_est <- ncol(est)
+  K_truth <- ncol(truth)
+  n <- nrow(est)
+
+  #if estimates don't have same number of columns, try padding the estimate with zeros and make cosine similarity zero
+  if (K_est < K_truth){
+    est <- cbind(est, matrix(rep(0, n*(K_truth-K_est)), nrow = n))
+  }
+
+  if (K_est > K_truth){
+    truth <- cbind(truth, matrix(rep(0, n*(K_est - K_truth)), nrow = n))
+  }
+
+  #normalize est and truth
+  norms_est <- apply(est, 2, function(x){sqrt(sum(x^2))})
+  norms_est[norms_est == 0] <- Inf
+
+  norms_truth <- apply(truth, 2, function(x){sqrt(sum(x^2))})
+  norms_truth[norms_truth == 0] <- Inf
+
+  est_normalized <- t(t(est)/norms_est)
+  truth_normalized <- t(t(truth)/norms_truth)
+
+  #compute matrix of cosine similarities
+  cosine_sim_matrix <- abs(crossprod(est_normalized, truth_normalized))
+  assignment_problem <- lp.assign(t(cosine_sim_matrix), direction = "max")
+
+  perm <- apply(assignment_problem$solution, 1, which.max)
+  return(perm)
+}
+```
+
+# Data Generation
+```{r}
+sim_binary_loadings_data <- function(args) {
+  set.seed(args$seed)
+  
+  LL <- matrix(0, nrow = args$n, ncol = args$k)
+  FF <- matrix(0, nrow = args$p, ncol = args$k)
+  for (i in 1:args$k){
+    FF[,i] <- rnorm(args$p, sd = args$group_sd[i])
+    LL[,i] <- rbinom(args$n, 1, args$pi1[i])
+  }
+  E <- matrix(rnorm(args$n * args$p, sd = args$indiv_sd), nrow = args$n)
+  Y <- LL %*% t(FF) + E
+  YYt <- (1/args$p)*tcrossprod(Y)
+  
+  return(list(Y = Y, YYt = YYt, LL = LL, FF = FF, K = ncol(LL)))
+}
+```
+
+```{r}
+n <- 100
+p <- 1000
+k <- 10
+pi1 <- rep(0.3, 10)
+indiv_sd <- 1
+group_sd <- rep(1, 10)
+seed <- 1
+sim_args = list(n = n, p = p, k = k, pi1 = pi1, indiv_sd = indiv_sd, group_sd = group_sd, seed = seed)
+sim_data <- sim_binary_loadings_data(sim_args)
+```
+
+```{r}
+plot_heatmap(sim_data$LL)
+```
+
+# Apply EBcovMF
+
+```{r}
+# Fit flashier with ebnm_generalized_binary on both loadings and factors
+fl <- flash_init(sim_data$YYt) %>%
+  flash_set_verbose(2) %>%
+  flash_greedy(
+    Kmax = 10,
+    ebnm_fn = ebnm_generalized_binary_fix_scale
+  ) %>%
+  flash_backfit(extrapolate = FALSE, warmstart = TRUE, maxiter = 500)
+```
+
+## Results
+```{r}
+plot_heatmap(fl$L_pm, colors_range = c('blue','gray96','red'), brks = seq(-max(abs(fl$L_pm)), max(abs(fl$L_pm)), length.out = 50))
+```
+
+```{r}
+plot_heatmap(fl$F_pm, colors_range = c('blue','gray96','red'), brks = seq(-max(abs(fl$L_pm)), max(abs(fl$L_pm)), length.out = 50))
+```
+
+```{r}
+# Bar plot of the correlations of the the two estimates
+factor_correlations <- diag(cor(fl$L_pm, fl$F_pm))
+
+fl_scaled <- ldf(fl)
+ebcovmf_permutation <- get_permutation(0.5*(fl_scaled$L + fl_scaled$F), sim_data$LL)
+
+# Preserve the original matrix order from top to bottom on the y-axis
+df <- data.frame(
+  Factor = factor(paste('Factor', 1:10), levels = paste('Factor', 1:10)),
+  Correlation = factor_correlations[ebcovmf_permutation]
+)
+
+ggplot(df, aes(x = Correlation, y = Factor)) +
+  geom_col(aes(fill = Correlation), width = 0.7) +
+  geom_vline(xintercept = 0, linetype = "solid", color = "grey40", linewidth = 0.6) +
+  scale_fill_gradient2(
+    low = "#2166ac", mid = "#f7f7f7", high = "#b2182b",
+    midpoint = 0, limits = c(-1, 1), name = "Correlation"
+  ) +
+  coord_cartesian(xlim = c(-1, 1)) +
+  labs(
+    x = "Correlation",
+    y = NULL,
+    title = "Factor Estimate Correlations"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank(),
+    axis.text.y = element_text(size = 9)
+  )
+```
+
+
+```{r}
+# Correlation heatmap between first loadings estimate and the true loadings
+cor_mat1 <- cor(fl$L_pm[,ebcovmf_permutation], sim_data$LL)
+rownames(cor_mat1) <- paste('Estimated Factor', 1:10)
+colnames(cor_mat1) <- paste('True Factor', 1:10)
+cor_df1 <- as.data.frame(as.table(cor_mat1))
+colnames(cor_df1) <- c("Estimate", "True", "Correlation")
+```
+
+```{r}
+num1 <- sub(".*?([0-9]+)$", "\\1", cor_df1$Estimate)
+num2 <- sub(".*?([0-9]+)$", "\\1", cor_df1$True)
+
+is_diag_match <- (num1 == num2) & grepl("[0-9]+$", cor_df1$Estimate) & grepl("[0-9]+$", cor_df1$True)
+
+cor_df1$diag_label <- ifelse(
+  is_diag_match,
+  sprintf("%.2f", cor_df1$Correlation),
+  ""
+)
+```
+
+```{r}
+ggplot(cor_df1, aes(x = Estimate, y = True, fill = Correlation)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  # Add text only where Var1 == Var2
+  geom_text(aes(label = diag_label), color = "black", size = 4, fontface = "bold") +
+  # Diverging color scale centered at 0
+  scale_fill_gradient2(
+    low = "#2166ac", 
+    mid = "#f7f7f7", 
+    high = "#b2182b", 
+    midpoint = 0, 
+    limits = c(-1, 1),
+    name = "Correlation"
+  ) +
+  coord_fixed() +
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)
+  )
+```
+
+```{r}
+# Correlation heatmap between the second loadings estimate and the true loadings
+cor_mat2 <- cor(fl$F_pm[,ebcovmf_permutation], sim_data$LL)
+rownames(cor_mat2) <- paste('Estimated Factor', 1:10)
+colnames(cor_mat2) <- paste('True Factor', 1:10)
+cor_df2 <- as.data.frame(as.table(cor_mat2))
+colnames(cor_df2) <- c("Estimate", "True", "Correlation")
+```
+
+```{r}
+num1 <- sub(".*?([0-9]+)$", "\\1", cor_df2$Estimate)
+num2 <- sub(".*?([0-9]+)$", "\\1", cor_df2$True)
+
+is_diag_match <- (num1 == num2) & grepl("[0-9]+$", cor_df2$Estimate) & grepl("[0-9]+$", cor_df2$True)
+
+cor_df2$diag_label <- ifelse(
+  is_diag_match,
+  sprintf("%.2f", cor_df2$Correlation),
+  ""
+)
+```
+
+```{r}
+ggplot(cor_df2, aes(x = Estimate, y = True, fill = Correlation)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  # Add text only where Var1 == Var2
+  geom_text(aes(label = diag_label), color = "black", size = 4, fontface = "bold") +
+  # Diverging color scale centered at 0
+  scale_fill_gradient2(
+    low = "#2166ac", 
+    mid = "#f7f7f7", 
+    high = "#b2182b", 
+    midpoint = 0, 
+    limits = c(-1, 1),
+    name = "Correlation"
+  ) +
+  coord_fixed() +
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)
+  )
+```
+
+# Apply EBCD-direct
+
+```{r}
+symebcovmf_fit <- sym_ebcovmf_fit(S = sim_data$YYt, ebnm_fn = ebnm_generalized_binary_fix_scale, K = 10, maxiter = 100, rank_one_tol = 10^(-5), tol = 10^(-5), refit_lam = TRUE)
+```
+
+```{r}
+symebcovmf_backfit_fit <- sym_ebcovmf_backfit(S = sim_data$YYt,
+                                              sym_ebcovmf_obj = symebcovmf_fit, ebnm_fn = ebnm_generalized_binary_fix_scale, backfit_maxiter = 100, backfit_tol = 10^(-5), optim_maxiter = 100, optim_tol = 10^(-5), refit_lam = FALSE)
+```
+
+## Results
+
+```{r}
+plot_heatmap(symebcovmf_backfit_fit$L_pm %*% diag(sqrt(symebcovmf_backfit_fit$lambda)))
+```
+
+```{r}
+symebcovmf_permutation <- get_permutation(symebcovmf_backfit_fit$L_pm, sim_data$LL)
+```
+
+```{r}
+# Correlation heatmap between EBCD-direct estimate and the true loadings
+cor_mat3 <- cor(symebcovmf_backfit_fit$L_pm[,symebcovmf_permutation], sim_data$LL)
+rownames(cor_mat3) <- paste('Estimated Factor', 1:10)
+colnames(cor_mat3) <- paste('True Factor', 1:10)
+cor_df3 <- as.data.frame(as.table(cor_mat3))
+colnames(cor_df3) <- c("Estimate", "True", "Correlation")
+```
+
+```{r}
+num1 <- sub(".*?([0-9]+)$", "\\1", cor_df3$Estimate)
+num2 <- sub(".*?([0-9]+)$", "\\1", cor_df3$True)
+
+is_diag_match <- (num1 == num2) & grepl("[0-9]+$", cor_df3$Estimate) & grepl("[0-9]+$", cor_df3$True)
+
+cor_df3$diag_label <- ifelse(
+  is_diag_match,
+  sprintf("%.2f", cor_df3$Correlation),
+  ""
+)
+```
+
+```{r}
+ggplot(cor_df3, aes(x = Estimate, y = True, fill = Correlation)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  # Add text only where Var1 == Var2
+  geom_text(aes(label = diag_label), color = "black", size = 4, fontface = "bold") +
+  # Diverging color scale centered at 0
+  scale_fill_gradient2(
+    low = "#2166ac", 
+    mid = "#f7f7f7", 
+    high = "#b2182b", 
+    midpoint = 0, 
+    limits = c(-1, 1),
+    name = "Correlation"
+  ) +
+  coord_fixed() +
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)
+  )
+```

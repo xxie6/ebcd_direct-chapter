@@ -1,0 +1,377 @@
+---
+title: "pancreas_celseq2_symebcovmf_stability_selection"
+author: "Annie Xie"
+date: "2026-10-02"
+output: pdf_document
+---
+
+# Packages
+```{r}
+library(ashr)
+library(ebnm)
+# pkgload::load_all('~/Documents/GitHub/ebnm')
+library(Matrix)
+library(fastTopics)
+library(ggplot2)
+library(cowplot)
+```
+
+```{r}
+library(symebcovmf)
+# pkgload::load_all('~/Documents/GitHub/packages/symebcovmf')
+```
+
+# Load in the Data
+```{r}
+load('~/single_cell_analyses/data/pancreas.RData')
+```
+
+```{r}
+set.seed(1)
+
+# Select the CEL-seq2 data (Muraro et al, 2016).
+# This should select 2,285 cells.
+i           <- which(sample_info$tech == "celseq2")
+sample_info <- sample_info[i,]
+counts      <- counts[i,]
+celltype <- sample_info$celltype
+celltype <-
+ factor(celltype,
+        c("acinar","ductal","activated_stellate","quiescent_stellate",
+          "endothelial","macrophage","mast","schwann","alpha","beta",
+          "delta","gamma","epsilon"))
+
+
+# Remove genes that are expressed in fewer than 10 cells.
+x      <- colSums(counts > 0)
+j      <- which(x > 9)
+counts <- counts[,j]
+
+# Compute the shifted log counts.
+a <- 1
+s <- rowSums(counts)
+s <- s/mean(s)
+Y <- MatrixExtra::mapSparse(counts/(a*s),log1p)
+
+# S <- (1/ncol(Y))*tcrossprod(Y)
+```
+
+# Split the data
+```{r}
+dim(Y)
+```
+
+```{r}
+set.seed(1)
+subset1 <- sample(1:ncol(Y), ncol(Y)/2)
+subset2 <- setdiff(1:ncol(Y), subset1)
+```
+
+```{r}
+S1 <- (1/ncol(Y[,subset1]))*tcrossprod(Y[,subset1])
+S2 <- (1/ncol(Y[,subset2]))*tcrossprod(Y[,subset2])
+```
+
+# EBCD-direct on subset 1
+
+```{r}
+pancreas_celseq2_symebcovmf_fit_subset1 <- sym_ebcovmf_fit(as.matrix(S1), ebnm::ebnm_point_exponential, 9, 200, 10^(-5), 10^(-5), refit_lam = TRUE)
+```
+
+```{r}
+pancreas_celseq2_symebcovmf_backfit_fit_subset1 <- sym_ebcovmf_backfit(as.matrix(S1), 
+                                                               pancreas_celseq2_symebcovmf_fit_subset1,
+                                                               ebnm::ebnm_point_exponential, 
+                                                               backfit_maxiter = 100,
+                                                               backfit_tol = 10^(-5),
+                                                               optim_maxiter = 100,
+                                                               optim_tol = 10^(-5)
+                                                               )
+```
+
+```{r}
+pancreas_celseq2_symebcovmf_fit_subset1 <- sym_ebcovmf_greedy(as.matrix(S1), pancreas_celseq2_symebcovmf_backfit_fit_subset1, ebnm::ebnm_point_exponential, 10, 200, 10^(-5), 10^(-5), refit_lam = TRUE)
+```
+
+```{r}
+pancreas_celseq2_symebcovmf_backfit_fit_subset1_2 <- sym_ebcovmf_backfit(as.matrix(S1), 
+                                                               pancreas_celseq2_symebcovmf_fit_subset1,
+                                                               ebnm::ebnm_point_exponential, 
+                                                               backfit_maxiter = 100,
+                                                               backfit_tol = 10^(-5),
+                                                               optim_maxiter = 100,
+                                                               optim_tol = 10^(-5)
+                                                               )
+```
+
+This is the structure plot for the loadings estimate:
+```{r}
+scaled_L1 <- pancreas_celseq2_symebcovmf_backfit_fit_subset1_2$L_pm %*% diag(sqrt(pancreas_celseq2_symebcovmf_backfit_fit_subset1_2$lambda))
+
+factor_colors <- Polychrome::kelly.colors(ncol(scaled_L1)+1)[-1]
+
+L <- scaled_L1
+k <- ncol(L)
+colnames(L) <- paste0("k",1:k)
+p1 <- structure_plot(L,grouping = celltype,
+                     colors = factor_colors,
+                     gap = 16,verbose = FALSE) +
+  labs(y = "membership",title = "EBCD-direct on Subset 1")
+p1
+```
+
+# EBCD-direct on subset 2
+
+```{r}
+pancreas_celseq2_symebcovmf_fit_subset2 <- sym_ebcovmf_fit(as.matrix(S2), ebnm::ebnm_point_exponential, 10, 200, 10^(-5), 10^(-5), refit_lam = TRUE)
+```
+
+```{r}
+pancreas_celseq2_symebcovmf_backfit_fit_subset2 <- sym_ebcovmf_backfit(as.matrix(S2), 
+                                                               pancreas_celseq2_symebcovmf_fit_subset2,
+                                                               ebnm::ebnm_point_exponential, 
+                                                               backfit_maxiter = 100,
+                                                               backfit_tol = 10^(-5),
+                                                               optim_maxiter = 100,
+                                                               optim_tol = 10^(-5)
+                                                               )
+```
+
+```{r}
+pancreas_celseq2_symebcovmf_fit_subset2 <- sym_ebcovmf_greedy(as.matrix(S2), pancreas_celseq2_symebcovmf_backfit_fit_subset2, ebnm::ebnm_point_exponential, 10, 200, 10^(-5), 10^(-5), refit_lam = TRUE)
+```
+
+```{r}
+pancreas_celseq2_symebcovmf_backfit_fit_subset2_2 <- sym_ebcovmf_backfit(as.matrix(S2), 
+                                                               pancreas_celseq2_symebcovmf_fit_subset2,
+                                                               ebnm::ebnm_point_exponential, 
+                                                               backfit_maxiter = 100,
+                                                               backfit_tol = 10^(-5),
+                                                               optim_maxiter = 100,
+                                                               optim_tol = 10^(-5)
+                                                               )
+```
+
+This is the structure plot for the loadings estimate:
+```{r}
+scaled_L2 <- pancreas_celseq2_symebcovmf_backfit_fit_subset2_2$L_pm %*% diag(sqrt(pancreas_celseq2_symebcovmf_backfit_fit_subset2_2$lambda))
+
+factor_colors <- Polychrome::kelly.colors(ncol(scaled_L2)+1)[-1]
+
+L <- scaled_L2
+k <- ncol(L)
+colnames(L) <- paste0("k",1:k)
+p1 <- structure_plot(L,grouping = celltype,
+                     colors = factor_colors,
+                     gap = 16,verbose = FALSE) +
+  labs(y = "membership",title = "EBCD-direct on Subset 2")
+p1
+```
+
+# Stability Selection
+
+```{r}
+# stability selection code
+compute_cosine_sim_matrix <- function(L1, L2){
+  norms1 <- apply(L1, 2, function(x){sqrt(sum(x^2))})
+  norms1[norms1 < 10^(-15)] <- Inf
+  
+  norms2 <- apply(L2, 2, function(x){sqrt(sum(x^2))})
+  norms2[norms2 < 10^(-15)] <- Inf
+  
+  L1_normalized <- t(t(L1)/norms1)
+  L2_normalized <- t(t(L2)/norms2)
+  
+  #compute matrix of cosine similarities
+  cosine_sim_matrix <- crossprod(L1_normalized, L2_normalized)
+  
+  return(cosine_sim_matrix)
+}
+
+stability_selection_post_processing <- function(L1, L2, threshold=0.99){
+  
+  # compute similarity
+  cosine_sim_matrix <- compute_cosine_sim_matrix(L1, L2)
+  
+  assignment_problem <- RcppHungarian::HungarianSolver(-1*cosine_sim_matrix)
+  pairings <- assignment_problem$pairs
+  
+  # remove things that were not paired
+  no_pair <- pairings[,2] == 0
+  pairings <- pairings[!(no_pair), , drop = FALSE]
+  
+  # filter pairings
+  pairing_similarities <- cosine_sim_matrix[pairings]
+  pairings.keep <- pairing_similarities > threshold
+  pairings <- pairings[pairings.keep, , drop = FALSE]
+  # K <- nrow(pairings)
+  
+  # compute final estimate
+  if (nrow(pairings) == 0){
+    L_final <- matrix(0, nrow = nrow(L1), ncol = 1)
+  } else {
+    paired_L <- list()
+    paired_L[[1]] <- L1[, pairings[,1],drop = FALSE]
+    paired_L[[2]] <- L2[, pairings[,2],drop=FALSE]
+    paired_L_arr <- simplify2array(paired_L)
+    L_final <- apply(paired_L_arr, 1:2, mean)
+  }
+  
+  return(list(final_est = L_final, pairings = pairings))
+}
+```
+
+## Threshold = 0.8
+```{r}
+stability_selection_results <- stability_selection_post_processing(scaled_L1, scaled_L2, 0.8)
+```
+
+```{r}
+stability_selection_L <- stability_selection_results$final_est
+factor_colors <- Polychrome::kelly.colors(ncol(stability_selection_L)+1)[-1]
+
+L <- stability_selection_L
+k <- ncol(L)
+colnames(L) <- paste0("k",1:k)
+p1 <- structure_plot(L,grouping = celltype,
+                     colors = factor_colors,
+                     gap = 16,verbose = FALSE) +
+  labs(y = "membership",title = "EBCD-direct")
+p1
+```
+
+```{r}
+donor <- sub("-.*$", "", sample_info$id)
+p2 <- structure_plot(L[,c(8:9),drop=FALSE],grouping = donor,
+                     colors = factor_colors[8:9],
+                     gap = 16,verbose = FALSE) +
+  labs(y = "membership",title = "EBCD-direct")
+p2
+```
+
+
+# Look at the driving genes
+
+```{r}
+library(flashier)
+```
+
+```{r}
+L_init <- L
+F_init <- t(solve(crossprod(L_init), as.matrix(Matrix::crossprod(L_init, Y))))
+```
+
+```{r}
+semi_nmf_fit <- flash_init(data = Y) |>
+  flash_factors_init(init = list(L_init, F_init), ebnm_fn = c(ebnm_point_exponential, ebnm_point_laplace)) |>
+  flash_factors_fix(kset = 1:ncol(L), which_dim = 'loadings') |>
+  flash_backfit()
+```
+
+```{r}
+# Peter's code
+effect_plot <- function (effects_matrix, font_size = 9,
+                         zero_value = 0.01) {
+  features <- rownames(effects_matrix)
+  pdat <- data.frame(feature_name = features,
+                     stringsAsFactors = FALSE)
+  pdat <- cbind(pdat,effects_matrix)
+  pdat <- reshape2::melt(pdat,id.vars = "feature_name",variable.name = "dim",
+               value.name = "value")
+  pdat <- transform(pdat,
+                    effect_size = abs(value),
+                    effect_sign = factor(sign(value),c(-1,0,1)),
+                    feature_name = factor(feature_name,rev(features)))
+  pdat$effect_size[pdat$effect_size < zero_value] <- NA
+  return(ggplot(pdat,aes(x = dim,y = feature_name,size = effect_size,
+                         fill = effect_sign)) +
+         geom_point(color = "white",shape = 21,na.rm = TRUE) +
+         scale_size(range = c(1,6),
+                    breaks = range(pdat$effect_size,na.rm = TRUE),
+                    labels = round(range(pdat$effect_size,na.rm = TRUE),
+                                   digits = 2)) +
+         scale_fill_manual(values = c("navy","gray","orangered"),
+                           drop = FALSE) +
+         guides(size = guide_legend(override.aes = list(fill = "black")),
+                fill = guide_legend(override.aes = list(size = 3))) +
+         labs(x = "dimension",y = "feature name",
+              fill = "effect sign",size = "effect size") +
+         theme_cowplot(font_size = font_size))
+}
+
+select_driving_genes <- function (effect_matrix, dims, n,
+                                  select_down_effects = TRUE) {
+  genes <- NULL
+  for (i in dims) {
+    genes <- c(genes,head(order(effect_matrix[,i],decreasing = TRUE),n))
+    if (select_down_effects)
+      genes <- c(genes,head(order(effect_matrix[,i],decreasing = FALSE),n))
+  }
+  genes <- unique(genes)
+  return(rownames(effect_matrix)[genes])
+}
+```
+
+```{r}
+semi_nmf_fit_scaled <- ldf(semi_nmf_fit, 'i')
+scaled_F <- semi_nmf_fit_scaled$F %*% diag(semi_nmf_fit_scaled$D) 
+```
+
+```{r}
+shared_factors <- c(2:11)
+genes <- select_driving_genes(scaled_F,dims = shared_factors,n = 5)
+```
+
+```{r}
+effect_plot(scaled_F[genes,shared_factors]) +
+    labs(x = "factor",y = "gene",size = "size",fill = "sign")
+```
+
+## Table of Driving Genes and Enriched Gene Sets
+```{r}
+library(dplyr)
+library(purrr)
+library(knitr)
+library(kableExtra)
+```
+
+```{r}
+# Function to get driving genes
+select_driving_genes_v2 <- function (effect_matrix, dims, n,
+                                  effects = 'up') {
+  genes <- NULL
+  for (i in dims) {
+    if (effects == 'up'){
+    genes <- c(genes,head(order(effect_matrix[,i],decreasing = TRUE),n))
+    }
+    if (effects == 'down')
+      genes <- c(genes,head(order(effect_matrix[,i],decreasing = FALSE),n))
+  }
+  genes <- unique(genes)
+  return(rownames(effect_matrix)[genes])
+}
+```
+
+```{r}
+# 2. Build the summary data frame for all factors
+gene_table_df <- tibble(
+  Factor = paste("Factor", 1:ncol(scaled_F)),
+  Driving_genes = map_chr(1:ncol(scaled_F), ~ paste(select_driving_genes_v2(dims = .x, effect_matrix = scaled_F, n = 10, effects = 'up'), collapse = ", "))
+)
+
+# 3. Render directly to LaTeX
+latex_output <- knitr::kable(
+  gene_table_df,
+  format = "latex",
+  booktabs = FALSE,
+  escape = TRUE,
+  linesep = "\\hline\n",
+  align = c("|l", ">{\\raggedright\\arraybackslash}p{11cm}|"),
+  col.names = c("Factor", "Driving Genes"),
+  caption = "Top driving genes per factor."
+)
+
+# Print the code to console or write directly to a .tex file
+cat(latex_output)
+# writeLines(latex_output, "driving_genes_table.tex")
+```

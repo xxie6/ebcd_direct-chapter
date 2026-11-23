@@ -1,0 +1,109 @@
+---
+title: "Analysis of EBCD-direct Simulations"
+author: "Annie Xie"
+date: "2026-11-23"
+output: pdf_document
+---
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(scales)
+```
+
+# Load in the Results
+
+```{r}
+dscout_full <- readRDS("dsc_results_df.rds")
+```
+
+## Cleaning the Data
+
+```{r}
+dscout_full <- dscout_full |> filter(analyze %in% c('pca','sindclus','sympres','codesymnmf','ebmfcov_diag','ebcd','gbcd','symebcovmf')) |> 
+  mutate(analyze = ifelse(analyze == 'symebcovmf', 'ebcd_direct', analyze)) |>
+  mutate(analyze = ifelse(analyze == 'ebmfcov_diag', 'ebcovmf', analyze)) |>
+  filter(score %in% c('prop_true_high_cos_sim','prop_est_high_cos_sim','cov_L2_fit')) |>
+  filter(is.na(analyze.additive_term) == TRUE | analyze.additive_term == FALSE) |>
+  filter(is.na(analyze.off_diagonal) == TRUE | analyze.off_diagonal == FALSE)
+```
+
+```{r}
+# let's make some new columns to help with plotting
+dscout_full <- dscout_full |> mutate(simulate_setting = paste(simulate, coalesce(simulate.pop_sizes, as.character(simulate.pi0)), sep = '-'))
+
+dscout_full <- dscout_full |> mutate(simulate_setting = case_match(simulate_setting,
+    "baltree_4pop-rep(40, 4)" ~ 'Balanced Tree - Balanced Groups',
+    "baltree_4pop-c(20,50,30,60)" ~ 'Balanced Tree - Unbalanced Groups',
+    "group_overlap-0.1" ~ 'Sparse Overlap - 0.1',
+    "group_overlap-0.3" ~ 'Sparse Overlap - 0.3',
+    "group_nonoverlap-rep(40, 4)" ~ 'Balanced Nonoverlap',
+    "group_nonoverlap-c(20,50,30,60)" ~ 'Unbalanced Nonoverlap',
+    "unbaltree_4pop-rep(40, 4)" ~ 'Unbalanced Tree',
+    .default = NA  # Optional: handles unexpected values
+  ))
+
+dscout_full$simulate_setting <- factor(dscout_full$simulate_setting, levels = c('Unbalanced Nonoverlap','Balanced Nonoverlap', 'Sparse Overlap - 0.1', 'Sparse Overlap - 0.3', 'Balanced Tree - Balanced Groups','Balanced Tree - Unbalanced Groups','Unbalanced Tree'))
+```
+
+```{r}
+# I also want to make new columns which capture the analysis method information
+dscout_full <- dscout_full |> mutate(method = paste0(analyze, ifelse(is.na(analyze.ebnm_fn), '', 
+                                                           paste0('-', ifelse(analyze.ebnm_fn == 'ebnm::ebnm_point_exponential', 'pt-exp', 'gb'))), 
+                                           ifelse(is.na(analyze.backfit), '', paste0('-', ifelse(analyze.backfit == TRUE, 'backfit', 'greedy')))))
+```
+
+# Sensitivity Boxplot
+```{r}
+dscout_plot1 <- dscout_full %>% filter(analyze.Kmax_factor == 1, score == 'prop_true_high_cos_sim', score.threshold == 0.9, 
+                                       ((analyze.ebnm_fn == 'ebnm::ebnm_point_exponential')| is.na(analyze.ebnm_fn) == TRUE), 
+                                       ((analyze.backfit == TRUE) | is.na(analyze.backfit) == TRUE))
+
+dscout_plot1$method <- factor(dscout_plot1$method, levels = c('pca', 'codesymnmf','sindclus','sympres', 'ebcovmf-pt-exp-backfit', 'gbcd-pt-exp', 'ebcd-pt-exp','ebcd_direct-pt-exp-backfit'))
+
+dscout_plot1$analyze <- factor(dscout_plot1$analyze, levels = c('pca', 'codesymnmf','sindclus','sympres', 'ebcovmf', 'gbcd', 'ebcd','ebcd_direct'))
+```
+
+```{r}
+ggplot(data = dscout_plot1, aes(x = analyze, y = score.result)) + geom_boxplot() + facet_wrap(~simulate_setting, ncol = 3) + theme(
+    # Rotate labels 45 degrees
+    axis.text.x = element_text(angle = 70, hjust = 1, vjust = 1)
+  ) + 
+  labs(title = "Sensitivity by Method and Simulation Setting",
+       x = "Method",
+       y = "Sensitivity (Threshold of 0.9)")
+```
+
+# Reconstruction Error Boxplot
+
+```{r}
+dscout_plot3 <- dscout_full %>% filter(analyze.Kmax_factor == 1, score == 'cov_L2_fit',
+                                       ((analyze.ebnm_fn == 'ebnm::ebnm_point_exponential')| is.na(analyze.ebnm_fn) == TRUE), 
+                                       ((analyze.backfit == TRUE) | is.na(analyze.backfit) == TRUE))
+
+dscout_plot3$method <- factor(dscout_plot3$method, levels = c('pca', 'codesymnmf','sindclus','sympres', 'ebmfcov_diag-pt-exp-backfit', 'gbcd-pt-exp', 'ebcd-pt-exp', 'ebcd_direct-pt-exp-backfit'))
+
+dscout_plot3$analyze <- factor(dscout_plot3$analyze, levels = c('pca', 'codesymnmf','sindclus','sympres', 'ebcovmf', 'gbcd', 'ebcd', 'ebcd_direct'))
+
+#normalize the reconstruction error
+dscout_plot3 <- dscout_plot3 |> mutate(n = case_match(simulate,
+    "baltree_4pop" ~ 160,
+    "group_overlap" ~ 100,
+    "group_nonoverlap" ~ 160,
+    "unbaltree_4pop" ~ 160,
+    .default = NA  # Optional: handles unexpected values
+  ))
+
+dscout_plot3 <- dscout_plot3 |> mutate(normalized_score.result = score.result/(n^2-n))
+```
+
+```{r}
+ggplot(data = dscout_plot3, aes(x = analyze, y = normalized_score.result)) + geom_boxplot() + facet_wrap(~simulate_setting, ncol = 3, scales = 'free_y') + theme(
+    # Rotate labels 45 degrees
+    axis.text.x = element_text(angle = 70, hjust = 1, vjust = 1)
+  ) + 
+  labs(title = "Reconstruction Error by Method and Simulation Setting",
+       x = "Method",
+       y = "Reconstruction Error")
+```
